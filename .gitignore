@@ -1,0 +1,4 @@
+node_modules/
+patch.py
+ssh_test*.exp
+*.log
