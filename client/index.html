@@ -1003,9 +1003,539 @@ function loadBookTabList() {
 
 // 在初始化中调用
 window.addEventListener('DOMContentLoaded', function() { loadBookTabList(); });
+
+// ============ 全局状态 ============
+let authToken = localStorage.getItem('aibaby_token') || '';
+let currentUser = null;
+
+// ============ API 调用 ============
+async function api(method, url, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (authToken) opts.headers['Authorization'] = 'Bearer ' + authToken;
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res = await fetch(url, opts);
+    return await res.json();
+  } catch(e) { return { error: '网络错误' }; }
+}
+
+// ============ 登录注册 ============
+function doLogin() {
+  const phone = document.querySelector('#f-l .fi[type="tel"]')?.value;
+  if (!phone || phone.length < 11) { toast('请输入正确的手机号'); return; }
+  api('POST', '/api/login', { phone }).then(data => {
+    if (data.error) { toast(data.error); return; }
+    authToken = data.token;
+    localStorage.setItem('aibaby_token', data.token);
+    toast('登录成功 ✅');
+    setTimeout(() => { closeS('s-login'); loadProfile(); }, 600);
+  });
+}
+
+function doRegister() {
+  const phone = document.querySelector('#f-r .fi[type="tel"]')?.value;
+  const nickname = document.querySelectorAll('#f-r .fi')[3]?.value;
+  if (!phone || phone.length < 11) { toast('请输入正确的手机号'); return; }
+  // 先自动登录
+  api('POST', '/api/login', { phone }).then(data => {
+    if (data.error) { toast(data.error); return; }
+    authToken = data.token;
+    localStorage.setItem('aibaby_token', data.token);
+    if (nickname) {
+      api('PUT', '/api/user/profile', { nickname });
+    }
+    toast('注册成功 ✅');
+    setTimeout(() => { closeS('s-login'); loadProfile(); }, 600);
+  });
+}
+
+// 替换登录注册按钮
+document.querySelector('#f-l .bp')?.removeEventListener('click', () => {});
+document.querySelector('#f-r .bp')?.removeEventListener('click', () => {});
+
+// ============ 加载个人资料 ============
+async function loadProfile() {
+  const data = await api('GET', '/api/user/profile');
+  if (data.error) return;
+  currentUser = data;
+  // 更新页面显示
+  const nameEl = document.querySelector('.pn h3');
+  if (nameEl) nameEl.textContent = data.nickname || data.phone;
+  const idEl = document.querySelector('.pn p');
+  if (idEl) idEl.textContent = 'ID: ' + (data.nickname || data.phone);
+  // 更新统计
+  const statNums = document.querySelectorAll('.si2 .n');
+  if (statNums[0]) statNums[0].textContent = data.book_count || 0;
+  if (statNums[1]) statNums[1].textContent = data.chat_count || 0;
+  if (statNums[2]) statNums[2].textContent = data.active_days || 1;
+  // 更新宝贝列表
+  const childList = document.querySelector('.pst:first-child .ml');
+  if (childList && data.children && data.children.length > 0) {
+    const items = childList.querySelectorAll('.mi');
+    // 移除旧的宝贝卡片
+    items.forEach(item => { if (item.textContent.includes('添加宝贝')) return; item.remove(); });
+    data.children.forEach(c => {
+      const div = document.createElement('div');
+      div.className = 'mi';
+      div.onclick = function() { toast('编辑：' + c.name); };
+      div.innerHTML = '<span class="mi2">' + c.avatar + '</span><span class="mt">' + c.name + ' · ' + c.age + '岁</span><span class="ma">›</span>';
+      childList.insertBefore(div, childList.querySelector('[style*="color:#FF9F43"]'));
+    });
+  }
+  // 更新绘本列表
+  loadBooks();
+  loadChatHistory();
+  loadGrowthRecords();
+}
+
+// ============ 绘本 ============
+async function loadBooks() {
+  const data = await api('GET', '/api/books');
+  if (data.error || !data.books) return;
+  // 更新 tab 上的绘本列表
+  updateBookTabList(data.books);
+  // 更新"我的绘本"子页面
+  const container = document.querySelector('#s-my-books .book-list');
+  if (!container) return;
+  if (data.books.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#999"><div style="font-size:48px;margin-bottom:12px">📖</div><p>还没有收藏绘本</p><p style="font-size:13px;margin-top:8px">生成故事后点击「收藏」保存</p></div>';
+    return;
+  }
+  container.innerHTML = '';
+  const colors = [['#FFECD2','#FCB69F'],['#E8E8FF','#C8C8FF'],['#E8F8E8','#B8E8B8'],['#FFF0F0','#FFD4D4'],['#F5E6FF','#D8BFFF'],['#FFFFD4','#FFE88A']];
+  const emojis = ['🦕','🌙','🤝','💪','📚','🎨'];
+  data.books.forEach(function(b, i) {
+    const c = colors[i % colors.length];
+    const e = emojis[i % emojis.length];
+    const date = new Date(b.created_at * 1000);
+    const dateStr = (date.getMonth()+1) + '/' + date.getDate();
+    const div = document.createElement('div');
+    div.className = 'book-item';
+    div.onclick = function() { viewSavedBook({ title: b.title, text: b.content, time: b.created_at }); };
+    div.innerHTML = '<div class="book-cover" style="background:linear-gradient(135deg,' + c[0] + ',' + c[1] + ')">' + e + '</div><div class="book-info"><h4>' + b.title + '</h4><p>' + b.content.substring(0, 60) + '...</p><div class="bi-tags"><span class="bi-tag">' + dateStr + '</span><span class="bi-tag">' + b.content.length + '字</span></div></div>';
+    container.appendChild(div);
+  });
+}
+
+function updateBookTabList(books) {
+  const el = document.getElementById('book-tab-list');
+  if (!el) return;
+  if (!books || books.length === 0) {
+    el.innerHTML = '<div style="text-align:center;padding:30px;color:#999;font-size:13px">还没有收藏，去生成一个吧~</div>';
+    return;
+  }
+  el.innerHTML = '';
+  books.slice(0, 3).forEach(function(b, i) {
+    const date = new Date(b.created_at * 1000);
+    const dateStr = (date.getMonth()+1) + '/' + date.getDate();
+    const div = document.createElement('div');
+    div.style.cssText = 'background:#fff;border-radius:16px;padding:16px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,.04);margin-bottom:12px;cursor:pointer';
+    div.onclick = function() { viewSavedBook({ title: b.title, text: b.content }); };
+    div.innerHTML = '<div style="display:flex;align-items:center;gap:12px"><div style="font-size:32px">📖</div><div><div style="font-size:15px;color:#333;font-weight:600">' + b.title + '</div><div style="font-size:12px;color:#999;margin-top:4px">' + dateStr + '</div></div></div>';
+    el.appendChild(div);
+  });
+}
+
+// ============ 保存绘本到数据库 ============
+async function saveStory() {
+  const title = document.querySelector('.stt2')?.textContent || '未命名';
+  const text = document.querySelector('.sttx')?.innerText || '';
+  if (!text || text.length < 10) { toast('没有可保存的故事'); return; }
+  const data = await api('POST', '/api/books', { title, theme: '', content: text, child_name: '' });
+  if (data.error) { toast('保存失败'); return; }
+  toast('✅ 已收藏');
+  loadBooks();
+  if (statNums) loadProfile();
+}
+
+function viewSavedBook(b) {
+  openS('s-bk4');
+  setTimeout(function() {
+    const tt = document.querySelector('.stt2');
+    const tx = document.querySelector('.sttx');
+    if (tt) tt.textContent = b.title;
+    if (tx) {
+      const paragraphs = b.text.split('\n').filter(function(p){return p.trim()}).map(function(p){return '<p>' + p.trim() + '</p>'}).join('');
+      tx.innerHTML = paragraphs;
+    }
+  }, 100);
+}
+
+// ============ 成长记录 ============
+async function loadGrowthRecords() {
+  const data = await api('GET', '/api/growth');
+  if (data.error || !data.records || data.records.length === 0) return;
+  const container = document.querySelector('.timeline');
+  if (!container) return;
+  container.innerHTML = '';
+  const colors = ['#FFF5E6','#E8F4FF','#FFECD2','#F0FFF0','#FFF0F0'];
+  data.records.slice(0, 10).forEach(function(r) {
+    const date = new Date(r.created_at * 1000);
+    const dateStr = date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
+    const div = document.createElement('div');
+    div.className = 'timeline-item';
+    div.innerHTML = '<div class="timeline-dot" style="background:' + colors[Math.floor(Math.random()*colors.length)] + '">' + (r.emoji||'📝') + '</div><div class="timeline-content"><h4>' + r.title + '</h4><p>' + (r.content||'') + '</p><div class="tl-time">' + dateStr + '</div></div>';
+    container.appendChild(div);
+  });
+}
+
+// ============ 聊天记录 ============
+async function loadChatHistory() {
+  if (!authToken) return;
+  const data = await api('GET', '/api/chat/history');
+  if (data.error || !data.messages) return;
+  data.messages.forEach(function(m) {
+    const cmId = 'cm-t';
+    const cm = document.getElementById(cmId);
+    if (!cm) return;
+    // 清除默认欢迎消息
+    if (cm.children.length === 1 && cm.children[0].querySelector('.av')) cm.innerHTML = '';
+    const d = document.createElement('div');
+    d.className = 'msg ' + (m.role === 'user' ? 'us' : 'ai');
+    const avEmoji = m.role === 'user' ? '😊' : '🤖';
+    d.innerHTML = '<div class="av">' + avEmoji + '</div><div class="bu">' + m.content.replace(/\n/g, '<br>') + '</div>';
+    cm.appendChild(d);
+  });
+  const cm = document.getElementById('cm-t');
+  if (cm) cm.scrollTop = cm.scrollHeight;
+}
+
+// ============ 修改聊天发送 ============
+const origSm = sm;
+window.sm = function(inp, cmId, exId) {
+  let t = inp.value.trim();
+  if (!t) return;
+  inp.value = '';
+  document.getElementById(exId).style.display = 'none';
+  lastQuestion = t;
+  addUser(document.getElementById(cmId), t);
+  addAI(document.getElementById(cmId));
+};
+
+const origAq = aq;
+window.aq = function(el, cmId, exId) {
+  document.getElementById(exId).style.display = 'none';
+  lastQuestion = el.textContent;
+  addUser(document.getElementById(cmId), el.textContent);
+  addAI(document.getElementById(cmId));
+};
+
+const origAddUser = addUser;
+window.addUser = function(cm, t) {
+  const d = document.createElement('div');
+  d.className = 'msg us';
+  d.innerHTML = '<div class="bu">' + t + '</div><div class="av">😊</div>';
+  cm.appendChild(d);
+  cm.scrollTop = cm.scrollHeight;
+};
+
+// 修改 addAI 保存到服务器
+const origAddAI = addAI;
+window.addAI = async function(cm) {
+  let d = document.createElement('div');
+  d.className = 'msg ai';
+  d.id = 'tp';
+  d.innerHTML = '<div class="av">🤖</div><div class="bu"><div class="tdi"><div class="tdd"></div><div class="tdd"></div><div class="tdd"></div></div></div>';
+  cm.appendChild(d);
+  cm.scrollTop = cm.scrollHeight;
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+      body: JSON.stringify({ message: lastQuestion, token: authToken })
+    });
+    const data = await res.json();
+    d.remove();
+    let r = document.createElement('div');
+    r.className = 'msg ai';
+    r.innerHTML = '<div class="av">🤖</div><div class="bu">' + data.reply.replace(/\n/g, '<br>') + '</div>';
+    cm.appendChild(r);
+    cm.scrollTop = cm.scrollHeight;
+  } catch(e) {
+    d.remove();
+    let r = document.createElement('div');
+    r.className = 'msg ai';
+    r.innerHTML = '<div class="av">🤖</div><div class="bu">网络错误，请稍后重试 🙏</div>';
+    cm.appendChild(r);
+    cm.scrollTop = cm.scrollHeight;
+  }
+};
+
+// ============ 初始化 ============
+window.addEventListener('DOMContentLoaded', function() {
+  if (authToken) {
+    loadProfile();
+  }
+});
+
 </script>
 
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+
+// ============ 全局状态 ============
+let authToken = localStorage.getItem('aibaby_token') || '';
+let currentUser = null;
+
+// ============ API 调用 ============
+async function api(method, url, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (authToken) opts.headers['Authorization'] = 'Bearer ' + authToken;
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res = await fetch(url, opts);
+    return await res.json();
+  } catch(e) { return { error: '网络错误' }; }
+}
+
+// ============ 登录注册 ============
+function doLogin() {
+  const phone = document.querySelector('#f-l .fi[type="tel"]')?.value;
+  if (!phone || phone.length < 11) { toast('请输入正确的手机号'); return; }
+  api('POST', '/api/login', { phone }).then(data => {
+    if (data.error) { toast(data.error); return; }
+    authToken = data.token;
+    localStorage.setItem('aibaby_token', data.token);
+    toast('登录成功 ✅');
+    setTimeout(() => { closeS('s-login'); loadProfile(); }, 600);
+  });
+}
+
+function doRegister() {
+  const phone = document.querySelector('#f-r .fi[type="tel"]')?.value;
+  const nickname = document.querySelectorAll('#f-r .fi')[3]?.value;
+  if (!phone || phone.length < 11) { toast('请输入正确的手机号'); return; }
+  // 先自动登录
+  api('POST', '/api/login', { phone }).then(data => {
+    if (data.error) { toast(data.error); return; }
+    authToken = data.token;
+    localStorage.setItem('aibaby_token', data.token);
+    if (nickname) {
+      api('PUT', '/api/user/profile', { nickname });
+    }
+    toast('注册成功 ✅');
+    setTimeout(() => { closeS('s-login'); loadProfile(); }, 600);
+  });
+}
+
+// 替换登录注册按钮
+document.querySelector('#f-l .bp')?.removeEventListener('click', () => {});
+document.querySelector('#f-r .bp')?.removeEventListener('click', () => {});
+
+// ============ 加载个人资料 ============
+async function loadProfile() {
+  const data = await api('GET', '/api/user/profile');
+  if (data.error) return;
+  currentUser = data;
+  // 更新页面显示
+  const nameEl = document.querySelector('.pn h3');
+  if (nameEl) nameEl.textContent = data.nickname || data.phone;
+  const idEl = document.querySelector('.pn p');
+  if (idEl) idEl.textContent = 'ID: ' + (data.nickname || data.phone);
+  // 更新统计
+  const statNums = document.querySelectorAll('.si2 .n');
+  if (statNums[0]) statNums[0].textContent = data.book_count || 0;
+  if (statNums[1]) statNums[1].textContent = data.chat_count || 0;
+  if (statNums[2]) statNums[2].textContent = data.active_days || 1;
+  // 更新宝贝列表
+  const childList = document.querySelector('.pst:first-child .ml');
+  if (childList && data.children && data.children.length > 0) {
+    const items = childList.querySelectorAll('.mi');
+    // 移除旧的宝贝卡片
+    items.forEach(item => { if (item.textContent.includes('添加宝贝')) return; item.remove(); });
+    data.children.forEach(c => {
+      const div = document.createElement('div');
+      div.className = 'mi';
+      div.onclick = function() { toast('编辑：' + c.name); };
+      div.innerHTML = '<span class="mi2">' + c.avatar + '</span><span class="mt">' + c.name + ' · ' + c.age + '岁</span><span class="ma">›</span>';
+      childList.insertBefore(div, childList.querySelector('[style*="color:#FF9F43"]'));
+    });
+  }
+  // 更新绘本列表
+  loadBooks();
+  loadChatHistory();
+  loadGrowthRecords();
+}
+
+// ============ 绘本 ============
+async function loadBooks() {
+  const data = await api('GET', '/api/books');
+  if (data.error || !data.books) return;
+  // 更新 tab 上的绘本列表
+  updateBookTabList(data.books);
+  // 更新"我的绘本"子页面
+  const container = document.querySelector('#s-my-books .book-list');
+  if (!container) return;
+  if (data.books.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#999"><div style="font-size:48px;margin-bottom:12px">📖</div><p>还没有收藏绘本</p><p style="font-size:13px;margin-top:8px">生成故事后点击「收藏」保存</p></div>';
+    return;
+  }
+  container.innerHTML = '';
+  const colors = [['#FFECD2','#FCB69F'],['#E8E8FF','#C8C8FF'],['#E8F8E8','#B8E8B8'],['#FFF0F0','#FFD4D4'],['#F5E6FF','#D8BFFF'],['#FFFFD4','#FFE88A']];
+  const emojis = ['🦕','🌙','🤝','💪','📚','🎨'];
+  data.books.forEach(function(b, i) {
+    const c = colors[i % colors.length];
+    const e = emojis[i % emojis.length];
+    const date = new Date(b.created_at * 1000);
+    const dateStr = (date.getMonth()+1) + '/' + date.getDate();
+    const div = document.createElement('div');
+    div.className = 'book-item';
+    div.onclick = function() { viewSavedBook({ title: b.title, text: b.content, time: b.created_at }); };
+    div.innerHTML = '<div class="book-cover" style="background:linear-gradient(135deg,' + c[0] + ',' + c[1] + ')">' + e + '</div><div class="book-info"><h4>' + b.title + '</h4><p>' + b.content.substring(0, 60) + '...</p><div class="bi-tags"><span class="bi-tag">' + dateStr + '</span><span class="bi-tag">' + b.content.length + '字</span></div></div>';
+    container.appendChild(div);
+  });
+}
+
+function updateBookTabList(books) {
+  const el = document.getElementById('book-tab-list');
+  if (!el) return;
+  if (!books || books.length === 0) {
+    el.innerHTML = '<div style="text-align:center;padding:30px;color:#999;font-size:13px">还没有收藏，去生成一个吧~</div>';
+    return;
+  }
+  el.innerHTML = '';
+  books.slice(0, 3).forEach(function(b, i) {
+    const date = new Date(b.created_at * 1000);
+    const dateStr = (date.getMonth()+1) + '/' + date.getDate();
+    const div = document.createElement('div');
+    div.style.cssText = 'background:#fff;border-radius:16px;padding:16px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,.04);margin-bottom:12px;cursor:pointer';
+    div.onclick = function() { viewSavedBook({ title: b.title, text: b.content }); };
+    div.innerHTML = '<div style="display:flex;align-items:center;gap:12px"><div style="font-size:32px">📖</div><div><div style="font-size:15px;color:#333;font-weight:600">' + b.title + '</div><div style="font-size:12px;color:#999;margin-top:4px">' + dateStr + '</div></div></div>';
+    el.appendChild(div);
+  });
+}
+
+// ============ 保存绘本到数据库 ============
+async function saveStory() {
+  const title = document.querySelector('.stt2')?.textContent || '未命名';
+  const text = document.querySelector('.sttx')?.innerText || '';
+  if (!text || text.length < 10) { toast('没有可保存的故事'); return; }
+  const data = await api('POST', '/api/books', { title, theme: '', content: text, child_name: '' });
+  if (data.error) { toast('保存失败'); return; }
+  toast('✅ 已收藏');
+  loadBooks();
+  if (statNums) loadProfile();
+}
+
+function viewSavedBook(b) {
+  openS('s-bk4');
+  setTimeout(function() {
+    const tt = document.querySelector('.stt2');
+    const tx = document.querySelector('.sttx');
+    if (tt) tt.textContent = b.title;
+    if (tx) {
+      const paragraphs = b.text.split('\n').filter(function(p){return p.trim()}).map(function(p){return '<p>' + p.trim() + '</p>'}).join('');
+      tx.innerHTML = paragraphs;
+    }
+  }, 100);
+}
+
+// ============ 成长记录 ============
+async function loadGrowthRecords() {
+  const data = await api('GET', '/api/growth');
+  if (data.error || !data.records || data.records.length === 0) return;
+  const container = document.querySelector('.timeline');
+  if (!container) return;
+  container.innerHTML = '';
+  const colors = ['#FFF5E6','#E8F4FF','#FFECD2','#F0FFF0','#FFF0F0'];
+  data.records.slice(0, 10).forEach(function(r) {
+    const date = new Date(r.created_at * 1000);
+    const dateStr = date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
+    const div = document.createElement('div');
+    div.className = 'timeline-item';
+    div.innerHTML = '<div class="timeline-dot" style="background:' + colors[Math.floor(Math.random()*colors.length)] + '">' + (r.emoji||'📝') + '</div><div class="timeline-content"><h4>' + r.title + '</h4><p>' + (r.content||'') + '</p><div class="tl-time">' + dateStr + '</div></div>';
+    container.appendChild(div);
+  });
+}
+
+// ============ 聊天记录 ============
+async function loadChatHistory() {
+  if (!authToken) return;
+  const data = await api('GET', '/api/chat/history');
+  if (data.error || !data.messages) return;
+  data.messages.forEach(function(m) {
+    const cmId = 'cm-t';
+    const cm = document.getElementById(cmId);
+    if (!cm) return;
+    // 清除默认欢迎消息
+    if (cm.children.length === 1 && cm.children[0].querySelector('.av')) cm.innerHTML = '';
+    const d = document.createElement('div');
+    d.className = 'msg ' + (m.role === 'user' ? 'us' : 'ai');
+    const avEmoji = m.role === 'user' ? '😊' : '🤖';
+    d.innerHTML = '<div class="av">' + avEmoji + '</div><div class="bu">' + m.content.replace(/\n/g, '<br>') + '</div>';
+    cm.appendChild(d);
+  });
+  const cm = document.getElementById('cm-t');
+  if (cm) cm.scrollTop = cm.scrollHeight;
+}
+
+// ============ 修改聊天发送 ============
+const origSm = sm;
+window.sm = function(inp, cmId, exId) {
+  let t = inp.value.trim();
+  if (!t) return;
+  inp.value = '';
+  document.getElementById(exId).style.display = 'none';
+  lastQuestion = t;
+  addUser(document.getElementById(cmId), t);
+  addAI(document.getElementById(cmId));
+};
+
+const origAq = aq;
+window.aq = function(el, cmId, exId) {
+  document.getElementById(exId).style.display = 'none';
+  lastQuestion = el.textContent;
+  addUser(document.getElementById(cmId), el.textContent);
+  addAI(document.getElementById(cmId));
+};
+
+const origAddUser = addUser;
+window.addUser = function(cm, t) {
+  const d = document.createElement('div');
+  d.className = 'msg us';
+  d.innerHTML = '<div class="bu">' + t + '</div><div class="av">😊</div>';
+  cm.appendChild(d);
+  cm.scrollTop = cm.scrollHeight;
+};
+
+// 修改 addAI 保存到服务器
+const origAddAI = addAI;
+window.addAI = async function(cm) {
+  let d = document.createElement('div');
+  d.className = 'msg ai';
+  d.id = 'tp';
+  d.innerHTML = '<div class="av">🤖</div><div class="bu"><div class="tdi"><div class="tdd"></div><div class="tdd"></div><div class="tdd"></div></div></div>';
+  cm.appendChild(d);
+  cm.scrollTop = cm.scrollHeight;
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+      body: JSON.stringify({ message: lastQuestion, token: authToken })
+    });
+    const data = await res.json();
+    d.remove();
+    let r = document.createElement('div');
+    r.className = 'msg ai';
+    r.innerHTML = '<div class="av">🤖</div><div class="bu">' + data.reply.replace(/\n/g, '<br>') + '</div>';
+    cm.appendChild(r);
+    cm.scrollTop = cm.scrollHeight;
+  } catch(e) {
+    d.remove();
+    let r = document.createElement('div');
+    r.className = 'msg ai';
+    r.innerHTML = '<div class="av">🤖</div><div class="bu">网络错误，请稍后重试 🙏</div>';
+    cm.appendChild(r);
+    cm.scrollTop = cm.scrollHeight;
+  }
+};
+
+// ============ 初始化 ============
+window.addEventListener('DOMContentLoaded', function() {
+  if (authToken) {
+    loadProfile();
+  }
+});
+
 </script>
 </body></html>

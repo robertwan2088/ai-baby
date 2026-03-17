@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,28 +14,321 @@ const AI_URL = process.env.AI_API_URL || 'https://api.deepseek.com';
 const AI_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'deepseek-chat';
 
-// ========== 育儿知识库 ==========
-const QA = [
-  { kw: ['吃饭','挑食','不吃饭','厌食','食欲'], a: '我理解你的担心，孩子挑食是很常见的。\n\n**几个实用建议：**\n\n1. **不要强迫**：让孩子自己决定吃什么吃多少\n2. **让孩子参与做饭**：一起买菜、洗菜、摆盘\n3. **固定用餐时间**：饭前1小时不吃零食\n4. **做好榜样**：家长也多样化饮食\n5. **让食物变有趣**：切成有趣形状\n\n如果持续一个月以上体重不增，建议看儿科。' },
-  { kw: ['幼小衔接','入学','上小学','学前'], a: '幼小衔接建议从这几方面准备：\n\n**学习能力**：每天15-20分钟专注力训练（阅读、画画、拼图）\n\n**生活自理**：自己穿衣、系鞋带、整理书包\n\n**社交能力**：学会合作、分享、表达需求\n\n**心理准备**：多聊小学的事，带孩子熟悉环境\n\n不要焦虑，关键是让孩子对上学充满期待。' },
-  { kw: ['发脾气','生气','哭闹','情绪','脾气'], a: '孩子发脾气是情绪表达还在发展中的正常表现。\n\n**当下：** 先接纳情绪，保持冷静，等孩子平静后再说\n\n**预防：** 识别触发点，提前预告，教情绪词汇\n\n4岁以上仍频繁激烈发脾气建议咨询专业人士。' },
-  { kw: ['阅读','看书','绘本','读书'], a: '培养阅读习惯的建议：\n\n**3-4岁**：每天15分钟亲子共读，图多字少的绘本\n**4-5岁**：延长到20分钟，读后讨论\n**5-6岁**：20-30分钟，开始自主阅读\n\n关键：固定时间、让孩子自己选书、家长做榜样。' },
-  { kw: ['睡觉','睡眠','晚睡','起床'], a: '各年龄段推荐睡眠：3-5岁10-13小时，5-6岁10-12小时。\n\n建议：固定作息、睡前仪式、避免屏幕、白天充分活动。' },
-  { kw: ['打人','咬人','攻击'], a: '幼儿期打人较常见，通常是因为语言能力不够。\n\n当下：平静制止，关注被打的孩子，不要以暴制暴。\n\n长期：教替代行为、角色扮演、读相关绘本。' },
-  { kw: ['认字','识字','拼音','写字'], a: '识字建议按年龄来：\n\n3-4岁：自然接触文字，不正式教\n4-5岁：游戏化识字，每天3-5个新字\n5-6岁：系统学习，每天3-5个，学正确笔顺\n\n关键：亲子共读是最好的识字方式。' },
-  { kw: ['数学','算数','数数','加减'], a: '数学启蒙按年龄来：\n\n3-4岁：数到10-20，认识形状\n4-5岁：数到100，简单加法\n5-6岁：10以内加减法，认识时间\n\n在生活中学习效果最好。' },
-];
+// ========== SQLite Database ==========
+const initSQL = require('sql.js');
+const DB_PATH = path.join(__dirname, '..', 'data', 'aibaby.db');
+let db = null;
 
-// ========== 故事模板 ==========
-const STORIES = {
-  '睡前故事': (n,a,g,h) => `从前，有一个叫${n}的小${g==='女'?'女孩':'男孩'}，今年${a}岁了。\n\n每天晚上睡觉前，${n}最喜欢听妈妈讲故事。但今天，妈妈说："${n}，今晚想不想去星星的世界看看呀？"\n\n${n}的眼睛一下子亮了起来。就在这时，窗外飘进来一颗闪闪发光的小星星，轻轻落在了${n}的手心里。\n\n"跟我来吧，"小星星说，"我带你去看看我的家。"\n\n${n}牵着小星星的手，飞过了屋顶，飞过了云层，来到了满天繁星的夜空。星星们都出来欢迎${n}了，排成一排，轻轻地唱着歌。\n\n${n}在星星们的歌声中，慢慢地闭上了眼睛。星星们用最柔软的星光给${n}盖了一床暖暖的光毯。\n\n"晚安，${n}。"月亮婆婆温柔地说，"明天又是美好的一天。"\n\n${n}微笑着进入了甜甜的梦乡。🌙`,
-  '冒险探索': (n,a,g,h) => `从前，有一个叫${n}的小${g==='女'?'女孩':'男孩'}，今年${a}岁。${n}最喜欢探险${h?'，尤其是'+h:''}。\n\n有一天，${n}在后院的大树下发现了一个闪闪发光的盒子。打开后跳出一个会说话的小指南针："你想不想去一个从未有人到过的地方？"\n\n于是${n}出发了。穿过唱歌的花田，踩着石头过了小溪，最后来到了山顶。\n\n山顶上有一棵美丽的"勇气之树"，树上结满了彩色的果实。\n\n"每颗果实都是一个小小的勇气，"小指南针说，"你今天的冒险，让这棵树又长出了新的果实。"\n\n${n}摘了一颗金色的果实放进口袋。回家的路上，${n}心里暖暖的——原来勇气就在自己心里。🌟`,
-  '友谊成长': (n,a,g,h) => `新学期第一天，${n}有点想妈妈。这时一个叫小豆的小朋友走过来说："你好呀，要不要一起玩积木？"\n\n两个人一起搭了一座又高又漂亮的城堡。${n}说："这是我们两个的友谊城堡！"\n\n下午一起画画，${n}画了最喜欢的${h||''}恐龙，小豆画了一道彩虹，两幅画连成了一幅大画。\n\n放学时小豆说："明天我们再一起玩好不好？"\n\n"${n}用力地点点头。回家的路上跟妈妈说："妈妈，我今天交到了一个好朋友！"\n\n原来交朋友这么简单，只要勇敢地说一声"你好"就行了。🤝`,
-  '学习发现': (n,a,g,h) => `${n}是一个充满好奇心的小${g==='女'?'女孩':'男孩'}，今年${a}岁。\n\n${n}最喜欢问"为什么"。有一天在花园里发现了一只毛毛虫。\n\n妈妈说："毛毛虫虽然走得慢，但每天都很努力。等到有一天，它就会变成一只漂亮的蝴蝶！"\n\n${n}决定每天来看。第一天吃叶子，第三天变胖了，第五天裹在蛹里不动了。\n\n又过了好几天，蛹动了！一只漂亮的蝴蝶慢慢地爬了出来，晒干翅膀后飞了起来！\n\n"${n}开心极了：原来最亮的光，一直都在自己心里。🌟`,
-  '勇气故事': (n,a,g,h) => `${n}有一个小秘密——怕黑。\n\n一天晚上妈妈忘了留小夜灯。${n}鼓起勇气掀开被角，发现窗外是满天繁星，一闪一闪像撒了满地的宝石。\n\n一颗小星星特别亮地闪了一下，好像在说"你好呀！"${n}不害怕了，趴在窗台数星星，数着数着就睡着了。\n\n从那以后${n}不怕黑了。因为${n}知道，黑暗之后就是最美丽的星空。\n\n每当害怕的时候，${n}就对自己说："勇敢不是不害怕，而是害怕了还愿意去发现。"🌟`,
-};
+async function initDB() {
+  const dir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
+  if (fs.existsSync(DB_PATH)) {
+    const buf = fs.readFileSync(DB_PATH);
+    const SQL = await initSQL();
+    db = new SQL.Database(buf);
+  } else {
+    const SQL = await initSQL();
+    db = new SQL.Database();
+  }
+
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    phone TEXT UNIQUE NOT NULL,
+    nickname TEXT DEFAULT '',
+    avatar TEXT DEFAULT '',
+    token TEXT DEFAULT '',
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    updated_at INTEGER DEFAULT (strftime('%s','now'))
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS children (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    age INTEGER DEFAULT 0,
+    gender TEXT DEFAULT '男',
+    avatar TEXT DEFAULT '👶',
+    hobbies TEXT DEFAULT '',
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS chat_messages (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS books (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    theme TEXT DEFAULT '',
+    content TEXT NOT NULL,
+    child_name TEXT DEFAULT '',
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS growth_records (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    child_id TEXT DEFAULT '',
+    type TEXT DEFAULT '日常',
+    title TEXT NOT NULL,
+    content TEXT DEFAULT '',
+    emoji TEXT DEFAULT '📝',
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS favorites (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    item_type TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    title TEXT DEFAULT '',
+    content TEXT DEFAULT '',
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE(user_id, item_type, item_id)
+  )`);
+
+  saveDB();
+  console.log('  📦 Database initialized');
+}
+
+function saveDB() {
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(DB_PATH, buffer);
+}
+
+function uid() { return crypto.randomBytes(16).toString('hex'); }
+
+function authMiddleware(req, res, next) {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: '请先登录' });
+  const user = db.prepare('SELECT id, phone, nickname, avatar FROM users WHERE token = ?').get(token);
+  if (!user) return res.status(401).json({ error: '登录已过期' });
+  req.user = user;
+  next();
+}
+
+// ========== Auth APIs ==========
+app.post('/api/register', authMiddleware, (req, res) => {
+  const { phone, nickname } = req.body;
+  if (!phone) return res.status(400).json({ error: '请输入手机号' });
+  try {
+    db.run('INSERT INTO users (id, phone, nickname, token) VALUES (?, ?, ?, ?)',
+      [req.user.id, phone, nickname || '宝妈' + phone.slice(-4), req.headers.authorization.replace('Bearer ', '')]);
+    saveDB();
+    res.json({ id: req.user.id, phone, nickname: nickname || '宝妈' + phone.slice(-4) });
+  } catch (e) {
+    res.status(400).json({ error: '该手机号已注册' });
+  }
+});
+
+app.post('/api/login', (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: '请输入手机号' });
+  const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+  if (user) {
+    const token = uid();
+    db.run('UPDATE users SET token = ?, updated_at = strftime("%s","now") WHERE id = ?', [token, user.id]);
+    saveDB();
+    res.json({ id: user.id, phone: user.phone, nickname: user.nickname, token });
+  } else {
+    // 自动注册
+    const id = uid();
+    const token = uid();
+    const nickname = '宝妈' + phone.slice(-4);
+    db.run('INSERT INTO users (id, phone, nickname, token) VALUES (?, ?, ?, ?)', [id, phone, nickname, token]);
+    saveDB();
+    res.json({ id, phone, nickname, token });
+  }
+});
+
+app.get('/api/user/profile', authMiddleware, (req, res) => {
+  const user = req.user;
+  const stats = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM books WHERE user_id = ?) as book_count,
+      (SELECT COUNT(*) FROM chat_messages WHERE user_id = ? AND role = 'user') as chat_count,
+      (SELECT COUNT(DISTINCT date(created_at, 'unixepoch')) FROM chat_messages WHERE user_id = ?) as active_days
+  `).get(user.id, user.id, user.id);
+  const children = db.prepare('SELECT * FROM children WHERE user_id = ?').all(user.id);
+  res.json({ ...user, ...stats, children });
+});
+
+app.put('/api/user/profile', authMiddleware, (req, res) => {
+  const { nickname, avatar } = req.body;
+  if (nickname) db.run('UPDATE users SET nickname = ? WHERE id = ?', [nickname, req.user.id]);
+  if (avatar) db.run('UPDATE users SET avatar = ? WHERE id = ?', [avatar, req.user.id]);
+  saveDB();
+  res.json({ message: '更新成功' });
+});
+
+// ========== Children APIs ==========
+app.post('/api/children', authMiddleware, (req, res) => {
+  const { name, age, gender, hobbies } = req.body;
+  if (!name) return res.status(400).json({ error: '请输入宝贝名字' });
+  const id = uid();
+  db.run('INSERT INTO children (id, user_id, name, age, gender, avatar, hobbies) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, req.user.id, name, age || 0, gender || '男', gender === '女' ? '👧' : '👦', hobbies || '']);
+  saveDB();
+  res.json({ id, name, age, gender });
+});
+
+app.put('/api/children/:id', authMiddleware, (req, res) => {
+  const { name, age, gender, hobbies } = req.body;
+  db.run('UPDATE children SET name=?, age=?, gender=?, hobbies=? WHERE id=? AND user_id=?',
+    [name, age, gender, hobbies, req.params.id, req.user.id]);
+  saveDB();
+  res.json({ message: '更新成功' });
+});
+
+app.delete('/api/children/:id', authMiddleware, (req, res) => {
+  db.run('DELETE FROM children WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  saveDB();
+  res.json({ message: '删除成功' });
+});
+
+// ========== Chat APIs ==========
+app.get('/api/chat/history', authMiddleware, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  const messages = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(req.user.id, limit).reverse();
+  res.json({ messages });
+});
+
+app.post('/api/chat', async (req, res) => {
+  const { message, token } = req.body;
+  if (!message) return res.status(400).json({ error: '请输入问题' });
+
+  let userId = null;
+  if (token) {
+    const user = db.prepare('SELECT id FROM users WHERE token = ?').get(token);
+    if (user) userId = user.id;
+  }
+
+  const aiReply = await callAI([
+    { role: 'system', content: '你是一位专业的幼儿教育顾问，拥有10年以上的儿童教育和心理学经验。回答要求：语气温和耐心，给出2-3条具体建议，200-400字。先共情再给建议。' },
+    { role: 'user', content: message }
+  ]);
+
+  if (aiReply && userId) {
+    db.run('INSERT INTO chat_messages (id, user_id, role, content) VALUES (?, ?, ?, ?)', [uid(), userId, 'user', message]);
+    db.run('INSERT INTO chat_messages (id, user_id, role, content) VALUES (?, ?, ?, ?)', [uid(), userId, 'ai', aiReply]);
+    saveDB();
+    return res.json({ reply: aiReply });
+  }
+
+  if (aiReply) return res.json({ reply: aiReply });
+
+  // 模拟降级
+  const low = message.toLowerCase();
+  const QA = [
+    { kw: ['吃饭','挑食'], a: '孩子挑食建议：\n1. 不要强迫进食\n2. 让孩子参与做饭\n3. 固定用餐时间\n4. 做好榜样\n5. 让食物变有趣' },
+    { kw: ['发脾气','生气','情绪'], a: '孩子发脾气处理方法：\n1. 先接纳情绪，保持冷静\n2. 等孩子平静后再说\n3. 教情绪词汇\n4. 预防：识别触发点，提前预告' },
+    { kw: ['阅读','绘本','看书'], a: '培养阅读习惯：\n3-4岁每天15分钟亲子共读\n4-5岁延长到20分钟\n5-6岁开始自主阅读\n关键：固定时间、让孩子选书、家长做榜样' },
+    { kw: ['睡觉','睡眠'], a: '各年龄段推荐睡眠：3-5岁10-13小时，5-6岁10-12小时。建议固定作息、睡前仪式、避免屏幕。' },
+  ];
+  let reply = '建议：1.尊重孩子节奏 2.多观察少干预 3.保持耐心 4.以身作则。提供更多细节我可以给更针对性的建议。';
+  for (const q of QA) { if (q.kw.some(k => low.includes(k))) { reply = q.a; break; } }
+  res.json({ reply });
+});
+
+// ========== Books APIs ==========
+app.get('/api/books', authMiddleware, (req, res) => {
+  const books = db.prepare('SELECT * FROM books WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
+  res.json({ books });
+});
+
+app.post('/api/books', authMiddleware, (req, res) => {
+  const { title, theme, content, child_name } = req.body;
+  if (!title || !content) return res.status(400).json({ error: '标题和内容不能为空' });
+  const id = uid();
+  db.run('INSERT INTO books (id, user_id, title, theme, content, child_name) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, req.user.id, title, theme || '', content, child_name || '']);
+  saveDB();
+  res.json({ id, title });
+});
+
+app.delete('/api/books/:id', authMiddleware, (req, res) => {
+  db.run('DELETE FROM books WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  saveDB();
+  res.json({ message: '删除成功' });
+});
+
+// ========== Growth Records APIs ==========
+app.get('/api/growth', authMiddleware, (req, res) => {
+  const records = db.prepare('SELECT * FROM growth_records WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(req.user.id);
+  res.json({ records });
+});
+
+app.post('/api/growth', authMiddleware, (req, res) => {
+  const { child_id, type, title, content, emoji } = req.body;
+  if (!title) return res.status(400).json({ error: '请输入记录标题' });
+  const id = uid();
+  db.run('INSERT INTO growth_records (id, user_id, child_id, type, title, content, emoji) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, req.user.id, child_id || '', type || '日常', title, content || '', emoji || '📝']);
+  saveDB();
+  res.json({ id, title });
+});
+
+// ========== Favorites APIs ==========
+app.get('/api/favorites', authMiddleware, (req, res) => {
+  const favs = db.prepare('SELECT * FROM favorites WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
+  res.json({ favorites: favs });
+});
+
+app.post('/api/favorites', authMiddleware, (req, res) => {
+  const { item_type, item_id, title, content } = req.body;
+  if (!item_type || !item_id) return res.status(400).json({ error: '参数错误' });
+  const id = uid();
+  try {
+    db.run('INSERT INTO favorites (id, user_id, item_type, item_id, title, content) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, req.user.id, item_type, item_id, title || '', content || '']);
+    saveDB();
+    res.json({ id });
+  } catch (e) {
+    res.json({ message: '已收藏' });
+  }
+});
+
+app.delete('/api/favorites/:id', authMiddleware, (req, res) => {
+  db.run('DELETE FROM favorites WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  saveDB();
+  res.json({ message: '已取消收藏' });
+});
+
+// ========== Story Generation API ==========
+app.post('/api/story', async (req, res) => {
+  const { name, age, gender, hobbies, theme } = req.body;
+  if (!name || !theme) return res.status(400).json({ error: '请填写名字和主题' });
+
+  const aiStory = await callAI([
+    { role: 'system', content: '你是一位优秀的儿童绘本作家。为3-6岁儿童创作300-500字的故事。语言简单生动，融入孩子名字和喜好。结尾温暖。不要暴力恐怖内容。' },
+    { role: 'user', content: `孩子：${name}，${age}岁，${gender}，爱好：${hobbies||'无'}，主题：${theme}。请创作专属故事。` }
+  ]);
+
+  if (aiStory) return res.json({ story: aiStory, title: name + '的' + theme + '故事' });
+
+  const TPL = {
+    '睡前故事': (n,a,g,h) => `从前，有一个叫${n}的小${g==='女'?'女孩':'男孩'}，今年${a}岁。\n\n每天晚上睡觉前，${n}最喜欢听妈妈讲故事。但今天，妈妈说："${n}，今晚想不想去星星的世界看看呀？"\n\n${n}的眼睛一下子亮了起来。就在这时，窗外飘进来一颗闪闪发光的小星星，轻轻落在了${n}的手心里。\n\n"跟我来吧，"小星星说。\n\n${n}牵着小星星的手，飞过了屋顶，飞过了云层，来到了满天繁星的夜空。星星们都出来欢迎${n}了，排成一排，轻轻地唱着歌。\n\n${n}在星星们的歌声中，慢慢地闭上了眼睛。星星们用最柔软的星光给${n}盖了一床暖暖的光毯。\n\n"晚安，${n}。"月亮婆婆温柔地说，"明天又是美好的一天。"\n\n${n}微笑着进入了甜甜的梦乡。🌙`,
+    '冒险探索': (n,a,g,h) => `从前，有一个叫${n}的小${g==='女'?'女孩':'男孩'}，今年${a}岁。\n\n有一天，${n}在后院的大树下发现了一个闪闪发光的盒子。打开后跳出一个会说话的小指南针："你想不想去一个从未有人到过的地方？"\n\n于是${n}出发了。穿过唱歌的花田，踩着石头过了小溪，最后来到了山顶。\n\n山顶上有一棵美丽的"勇气之树"，树上结满了彩色的果实。\n\n"每颗果实都是一个小小的勇气，"小指南针说，"你今天的冒险，让这棵树又长出了新的果实。"\n\n${n}摘了一颗金色的果实放进口袋。回家的路上，${n}心里暖暖的——原来勇气就在自己心里。🌟`,
+  };
+  const tpl = TPL[theme] || TPL['冒险探索'];
+  res.json({ story: tpl(n, age||'5', gender||'男', hobbies||''), title: n + '的' + theme + '故事' });
+});
+
+// ========== AI Helper ==========
 async function callAI(messages) {
+  if (!AI_KEY) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30000);
   try {
@@ -49,48 +344,13 @@ async function callAI(messages) {
   } catch (e) { clearTimeout(timer); console.error('AI error:', e.message); return null; }
 }
 
-// ========== 路由 ==========
-
+// ========== Start ==========
 app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'AI 宝贝', ai: AI_MODEL }));
 
-app.post('/api/chat', async (req, res) => {
-  const { message } = req.body;
-  if (!message) return res.status(400).json({ error: '请输入问题' });
-
-  const aiReply = await callAI([
-    { role: 'system', content: '你是一位专业的幼儿教育顾问，拥有10年以上的儿童教育和心理学经验。回答要求：语气温和耐心，给出2-3条具体可操作的建议，200-400字。先共情再给建议，涉及健康问题建议就医。' },
-    { role: 'user', content: message }
-  ]);
-
-  if (aiReply) return res.json({ reply: aiReply });
-
-  // 降级到模拟
-  const low = message.toLowerCase();
-  let reply = null;
-  for (const q of QA) { if (q.kw.some(k => low.includes(k))) { reply = q.a; break; } }
-  if (!reply) reply = `关于"${message.substring(0,20)}..."，建议：1.尊重孩子节奏 2.多观察少干预 3.保持耐心 4.以身作则。提供更多细节我可以给更针对性的建议。`;
-  res.json({ reply });
-});
-
-app.post('/api/story', async (req, res) => {
-  const { name, age, gender, hobbies, theme } = req.body;
-  if (!name || !theme) return res.status(400).json({ error: '请填写名字和主题' });
-
-  const aiStory = await callAI([
-    { role: 'system', content: '你是一位优秀的儿童绘本作家。为3-6岁儿童创作300-500字的故事。语言简单生动，融入孩子名字和喜好。结尾温暖。不要暴力恐怖内容，不要说教。' },
-    { role: 'user', content: `孩子：${name}，${age}岁，${gender}，爱好：${hobbies||'无'}，主题：${theme}。请创作专属故事。` }
-  ]);
-
-  if (aiStory) return res.json({ story: aiStory, title: name + '的' + theme + '故事' });
-
-  const tpl = STORIES[theme] || STORIES['冒险探索'];
-  res.json({ story: tpl(name, age || '5', gender || '男', hobbies || ''), title: name + '的' + theme + '故事' });
-});
-
-app.post('/api/tts', (req, res) => res.json({ supported: false }));
-
-app.listen(PORT, () => {
-  console.log('\n🤱 AI 宝贝 已启动！');
-  console.log('   http://localhost:' + PORT);
-  console.log('   AI: ' + AI_MODEL + ' ✅\n');
-});
+initDB().then(() => {
+  app.listen(PORT, () => {
+    console.log('\n🤱 AI 宝贝 已启动！');
+    console.log('   http://localhost:' + PORT);
+    console.log('   AI: ' + (AI_KEY ? AI_MODEL + ' ✅' : '模拟模式 ⚙️') + '\n');
+  });
+}).catch(e => console.error('DB init failed:', e));
