@@ -7,421 +7,281 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/element-plus@2.4.4/dist/index.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/element-plus@2.4.4/dist/index.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
     <div id="app"></div>
     
     <script>
-        const { createApp, ref, computed, onMounted, reactive } = Vue;
+        const { createApp, ref, computed, onMounted, reactive, watch } = Vue;
+
+        // ========== API 封装 ==========
+        const adminToken = () => localStorage.getItem('adminToken') || '';
+
+        async function adminFetch(url, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + adminToken(),
+                ...options.headers,
+            };
+            const res = await fetch(url, { ...options, headers });
+            const data = await res.json();
+            if (res.status === 401) {
+                localStorage.removeItem('adminToken');
+                localStorage.removeItem('adminUser');
+                location.reload();
+                throw new Error('登录已过期');
+            }
+            return data;
+        }
 
         const app = createApp({
-            components: {},
             setup() {
+                const isLoggedIn = ref(!!adminToken());
+                const loginForm = reactive({ username: '', password: '' });
+                const loginLoading = ref(false);
                 const activeTab = ref('dashboard');
                 const loading = ref(false);
                 
                 // 数据
-                const stats = reactive({
-                    users: 0,
-                    babies: 0,
-                    games: 0,
-                    qa: 0,
-                    recommendations: 0
-                });
+                const stats = reactive({ users: 0, babies: 0, games: 0, qa: 0, recommendations: 0 });
                 
                 // Games
-                const gameForm = reactive({
-                    title: '',
-                    icon: '',
-                    category: '',
-                    age_range: '',
-                    description: '',
-                    thumbnail: '',
-                    is_featured: false,
-                    rating: 4.5
-                });
-                
+                const gameForm = reactive({ title: '', icon: '', category: '', age_range: '', description: '', thumbnail: '', is_featured: false, rating: 4.5 });
                 const games = ref([]);
                 const gameDialogVisible = ref(false);
                 const editingGameId = ref(null);
                 
                 // QA
-                const qaForm = reactive({
-                    question: '',
-                    answer: '',
-                    category: '',
-                    tags: ''
-                });
-                
+                const qaForm = reactive({ question: '', answer: '', category: '', tags: '' });
                 const qaList = ref([]);
                 const qaDialogVisible = ref(false);
                 const editingQaId = ref(null);
                 
                 // Recommendations
-                const recForm = reactive({
-                    title: '',
-                    content: '',
-                    category: '',
-                    thumbnail: '',
-                    link: '',
-                    is_featured: false,
-                    order_num: 0
-                });
-                
+                const recForm = reactive({ title: '', content: '', category: '', thumbnail: '', link: '', is_featured: false, order_num: 0 });
                 const recList = ref([]);
                 const recDialogVisible = ref(false);
                 const editingRecId = ref(null);
                 
                 // Users
                 const users = ref([]);
-                
-                // Load data
+
+                // ========== 登录 ==========
+                const handleLogin = async () => {
+                    if (!loginForm.username || !loginForm.password) {
+                        return ElementPlus.ElMessage.warning('请输入用户名和密码');
+                    }
+                    loginLoading.value = true;
+                    try {
+                        const res = await fetch('/api/admin/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(loginForm),
+                        }).then(r => r.json());
+
+                        if (res.success) {
+                            localStorage.setItem('adminToken', res.token);
+                            localStorage.setItem('adminUser', JSON.stringify(res.admin));
+                            isLoggedIn.value = true;
+                            ElementPlus.ElMessage.success('登录成功');
+                            loadStats();
+                        } else {
+                            ElementPlus.ElMessage.error(res.error || '登录失败');
+                        }
+                    } catch (e) {
+                        ElementPlus.ElMessage.error('网络错误');
+                    } finally {
+                        loginLoading.value = false;
+                    }
+                };
+
+                // ========== 加载数据 ==========
                 const loadStats = async () => {
                     loading.value = true;
                     try {
-                        const res = await fetch('/api/admin/stats').then(r => r.json());
-                        if (res.success) {
-                            Object.assign(stats, res.stats);
-                        }
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('加载统计数据失败');
-                    }
+                        const res = await adminFetch('/api/admin/stats');
+                        if (res.success) Object.assign(stats, res.stats);
+                    } catch (e) { ElementPlus.ElMessage.error('加载失败'); }
                     loading.value = false;
                 };
                 
                 const loadGames = async () => {
                     loading.value = true;
                     try {
-                        const res = await fetch('/api/admin/games').then(r => r.json());
-                        if (res.success) {
-                            games.value = res.games;
-                        }
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('加载游戏列表失败');
-                    }
+                        const res = await adminFetch('/api/admin/games');
+                        if (res.success) games.value = res.games;
+                    } catch (e) { ElementPlus.ElMessage.error('加载失败'); }
                     loading.value = false;
                 };
                 
                 const loadQA = async () => {
                     loading.value = true;
                     try {
-                        const res = await fetch('/api/admin/qa').then(r => r.json());
-                        if (res.success) {
-                            qaList.value = res.qa;
-                        }
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('加载问答列表失败');
-                    }
+                        const res = await adminFetch('/api/admin/qa');
+                        if (res.success) qaList.value = res.qa;
+                    } catch (e) { ElementPlus.ElMessage.error('加载失败'); }
                     loading.value = false;
                 };
                 
                 const loadRecommendations = async () => {
                     loading.value = true;
                     try {
-                        const res = await fetch('/api/admin/recommendations').then(r => r.json());
-                        if (res.success) {
-                            recList.value = res.recommendations;
-                        }
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('加载推荐列表失败');
-                    }
+                        const res = await adminFetch('/api/admin/recommendations');
+                        if (res.success) recList.value = res.recommendations;
+                    } catch (e) { ElementPlus.ElMessage.error('加载失败'); }
                     loading.value = false;
                 };
                 
                 const loadUsers = async () => {
                     loading.value = true;
                     try {
-                        const res = await fetch('/api/admin/users').then(r => r.json());
-                        if (res.success) {
-                            users.value = res.users;
-                        }
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('加载用户列表失败');
-                    }
+                        const res = await adminFetch('/api/admin/users');
+                        if (res.success) users.value = res.users;
+                    } catch (e) { ElementPlus.ElMessage.error('加载失败'); }
                     loading.value = false;
                 };
+
+                // 监听 tab 切换
+                watch(activeTab, (tab) => {
+                    if (tab === 'dashboard') loadStats();
+                    else if (tab === 'games') loadGames();
+                    else if (tab === 'qa') loadQA();
+                    else if (tab === 'recommendations') loadRecommendations();
+                    else if (tab === 'users') loadUsers();
+                });
                 
-                // Game actions
+                // ========== 游戏 CRUD ==========
                 const openGameDialog = () => {
                     editingGameId.value = null;
-                    gameForm.title = '';
-                    gameForm.icon = '';
-                    gameForm.category = '';
-                    gameForm.age_range = '';
-                    gameForm.description = '';
-                    gameForm.thumbnail = '';
-                    gameForm.is_featured = false;
-                    gameForm.rating = 4.5;
+                    Object.assign(gameForm, { title: '', icon: '', category: '', age_range: '', description: '', thumbnail: '', is_featured: false, rating: 4.5 });
                     gameDialogVisible.value = true;
                 };
                 
                 const editGame = (game) => {
                     editingGameId.value = game.id;
-                    Object.assign(gameForm, {
-                        title: game.title,
-                        icon: game.icon,
-                        category: game.category,
-                        age_range: game.age_range,
-                        description: game.description,
-                        thumbnail: game.thumbnail,
-                        is_featured: game.is_featured === 1,
-                        rating: game.rating
-                    });
+                    Object.assign(gameForm, { title: game.title, icon: game.icon, category: game.category, age_range: game.age_range, description: game.description, thumbnail: game.thumbnail, is_featured: game.is_featured === 1, rating: game.rating });
                     gameDialogVisible.value = true;
                 };
                 
                 const saveGame = async () => {
-                    const url = editingGameId.value 
-                        ? `/api/admin/games/${editingGameId.value}` 
-                        : '/api/admin/games';
-                    
-                    const method = editingGameId.value ? 'PUT' : 'POST';
-                    
+                    const url = editingGameId.value ? `/api/admin/games/${editingGameId.value}` : '/api/admin/games';
                     try {
-                        const res = await fetch(url, {
-                            method: method,
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(gameForm)
-                        }).then(r => r.json());
-                        
-                        if (res.success) {
-                            ElementPlus.ElMessage.success(res.message);
-                            gameDialogVisible.value = false;
-                            editingGameId.value = null;
-                            loadGames();
-                        } else {
-                            ElementPlus.ElMessage.error(res.error);
-                        }
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('操作失败');
-                    }
+                        const res = await adminFetch(url, { method: editingGameId.value ? 'PUT' : 'POST', body: JSON.stringify(gameForm) });
+                        if (res.success) { ElementPlus.ElMessage.success(res.message); gameDialogVisible.value = false; loadGames(); }
+                        else ElementPlus.ElMessage.error(res.error);
+                    } catch (e) { ElementPlus.ElMessage.error('操作失败'); }
                 };
                 
                 const deleteGame = async (id) => {
                     try {
-                        await ElementPlus.ElMessageBox.confirm('确认删除这个游戏吗？', '警告');
-                        
-                        const res = await fetch(`/api/admin/games/${id}`, {
-                            method: 'DELETE'
-                        }).then(r => r.json());
-                        
-                        if (res.success) {
-                            ElementPlus.ElMessage.success(res.message);
-                            loadGames();
-                        } else {
-                            ElementPlus.ElMessage.error(res.error);
-                        }
-                    } catch (e) {
-                        // 用户取消
-                    }
+                        await ElementPlus.ElMessageBox.confirm('确认删除？', '警告');
+                        const res = await adminFetch(`/api/admin/games/${id}`, { method: 'DELETE' });
+                        if (res.success) { ElementPlus.ElMessage.success(res.message); loadGames(); }
+                        else ElementPlus.ElMessage.error(res.error);
+                    } catch (e) {}
                 };
                 
-                // QA actions
-                const openQaDialog = () => {
-                    editingQaId.value = null;
-                    qaForm.question = '';
-                    qaForm.answer = '';
-                    qaForm.category = '';
-                    qaForm.tags = '';
-                    qaDialogVisible.value = true;
-                };
-                
-                const editQa = (item) => {
-                    editingQaId.value = item.id;
-                    Object.assign(qaForm, {
-                        question: item.question,
-                        answer: item.answer,
-                        category: item.category,
-                        tags: item.tags
-                    });
-                    qaDialogVisible.value = true;
-                };
-                
+                // ========== 问答 CRUD ==========
+                const openQaDialog = () => { editingQaId.value = null; Object.assign(qaForm, { question: '', answer: '', category: '', tags: '' }); qaDialogVisible.value = true; };
+                const editQa = (item) => { editingQaId.value = item.id; Object.assign(qaForm, { question: item.question, answer: item.answer, category: item.category, tags: item.tags }); qaDialogVisible.value = true; };
                 const saveQa = async () => {
-                    const url = editingQaId.value 
-                        ? `/api/admin/qa/${editingQaId.value}` 
-                        : '/api/admin/qa';
-                    
-                    const method = editingQaId.value ? 'PUT' : 'POST';
-                    
+                    const url = editingQaId.value ? `/api/admin/qa/${editingQaId.value}` : '/api/admin/qa';
                     try {
-                        const res = await fetch(url, {
-                            method: method,
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(qaForm)
-                        }).then(r => r.json());
-                        
-                        if (res.success) {
-                            ElementPlus.ElMessage.success(res.message);
-                            qaDialogVisible.value = false;
-                            editingQaId.value = null;
-                            loadQA();
-                        } else {
-                            ElementPlus.ElMessage.error(res.error);
-                        }
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('操作失败');
-                    }
+                        const res = await adminFetch(url, { method: editingQaId.value ? 'PUT' : 'POST', body: JSON.stringify(qaForm) });
+                        if (res.success) { ElementPlus.ElMessage.success(res.message); qaDialogVisible.value = false; loadQA(); }
+                        else ElementPlus.ElMessage.error(res.error);
+                    } catch (e) { ElementPlus.ElMessage.error('操作失败'); }
                 };
-                
                 const deleteQa = async (id) => {
                     try {
-                        await ElementPlus.ElMessageBox.confirm('确认删除这个问题吗？', '警告');
-                        
-                        const res = await fetch(`/api/admin/qa/${id}`, {
-                            method: 'DELETE'
-                        }).then(r => r.json());
-                        
-                        if (res.success) {
-                            ElementPlus.ElMessage.success(res.message);
-                            loadQA();
-                        } else {
-                            ElementPlus.ElMessage.error(res.error);
-                        }
-                    } catch (e) {
-                        // 用户取消
-                    }
+                        await ElementPlus.ElMessageBox.confirm('确认删除？', '警告');
+                        const res = await adminFetch(`/api/admin/qa/${id}`, { method: 'DELETE' });
+                        if (res.success) { ElementPlus.ElMessage.success(res.message); loadQA(); }
+                    } catch (e) {}
                 };
                 
-                // Recommendation actions
-                const openRecDialog = () => {
-                    editingRecId.value = null;
-                    recForm.title = '';
-                    recForm.content = '';
-                    recForm.category = '';
-                    recForm.thumbnail = '';
-                    recForm.link = '';
-                    recForm.is_featured = false;
-                    recForm.order_num = 0;
-                    recDialogVisible.value = true;
-                };
-                
-                const editRec = (item) => {
-                    editingRecId.value = item.id;
-                    Object.assign(recForm, {
-                        title: item.title,
-                        content: item.content,
-                        category: item.category,
-                        thumbnail: item.thumbnail,
-                        link: item.link,
-                        is_featured: item.is_featured === 1,
-                        order_num: item.order_num
-                    });
-                    recDialogVisible.value = true;
-                };
-                
+                // ========== 推荐 CRUD ==========
+                const openRecDialog = () => { editingRecId.value = null; Object.assign(recForm, { title: '', content: '', category: '', thumbnail: '', link: '', is_featured: false, order_num: 0 }); recDialogVisible.value = true; };
+                const editRec = (item) => { editingRecId.value = item.id; Object.assign(recForm, { title: item.title, content: item.content, category: item.category, thumbnail: item.thumbnail, link: item.link, is_featured: item.is_featured === 1, order_num: item.order_num }); recDialogVisible.value = true; };
                 const saveRec = async () => {
-                    const url = editingRecId.value 
-                        ? `/api/admin/recommendations/${editingRecId.value}` 
-                        : '/api/admin/recommendations';
-                    
-                    const method = editingRecId.value ? 'PUT' : 'POST';
-                    
+                    const url = editingRecId.value ? `/api/admin/recommendations/${editingRecId.value}` : '/api/admin/recommendations';
                     try {
-                        const res = await fetch(url, {
-                            method: method,
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(recForm)
-                        }).then(r => r.json());
-                        
-                        if (res.success) {
-                            ElementPlus.ElMessage.success(res.message);
-                            recDialogVisible.value = false;
-                            editingRecId.value = null;
-                            loadRecommendations();
-                        } else {
-                            ElementPlus.ElMessage.error(res.error);
-                        }
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('操作失败');
-                    }
+                        const res = await adminFetch(url, { method: editingRecId.value ? 'PUT' : 'POST', body: JSON.stringify(recForm) });
+                        if (res.success) { ElementPlus.ElMessage.success(res.message); recDialogVisible.value = false; loadRecommendations(); }
+                        else ElementPlus.ElMessage.error(res.error);
+                    } catch (e) { ElementPlus.ElMessage.error('操作失败'); }
                 };
-                
                 const deleteRec = async (id) => {
                     try {
-                        await ElementPlus.ElMessageBox.confirm('确认删除这个推荐吗？', '警告');
-                        
-                        const res = await fetch(`/api/admin/recommendations/${id}`, {
-                            method: 'DELETE'
-                        }).then(r => r.json());
-                        
-                        if (res.success) {
-                            ElementPlus.ElMessage.success(res.message);
-                            loadRecommendations();
-                        } else {
-                            ElementPlus.ElMessage.error(res.error);
-                        }
-                    } catch (e) {
-                        // 用户取消
-                    }
+                        await ElementPlus.ElMessageBox.confirm('确认删除？', '警告');
+                        const res = await adminFetch(`/api/admin/recommendations/${id}`, { method: 'DELETE' });
+                        if (res.success) { ElementPlus.ElMessage.success(res.message); loadRecommendations(); }
+                    } catch (e) {}
                 };
-                
-                // Logout
-                const logout = async () => {
+
+                // ========== 用户 ==========
+                const deleteUser = async (id) => {
                     try {
-                        await fetch('/api/admin/logout', { method: 'POST' });
-                        localStorage.removeItem('adminToken');
-                        localStorage.removeItem('adminUser');
-                        window.location.href = '/admin';
-                    } catch (e) {
-                        ElementPlus.ElMessage.error('登出失败');
-                    }
+                        await ElementPlus.ElMessageBox.confirm('确认删除该用户？将同时删除其宝贝数据', '警告', { type: 'warning' });
+                        const res = await adminFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+                        if (res.success) { ElementPlus.ElMessage.success(res.message); loadUsers(); loadStats(); }
+                        else ElementPlus.ElMessage.error(res.error);
+                    } catch (e) {}
                 };
                 
-                // Init
+                // ========== 登出 ==========
+                const logout = () => {
+                    localStorage.removeItem('adminToken');
+                    localStorage.removeItem('adminUser');
+                    isLoggedIn.value = false;
+                };
+                
+                // ========== 初始化 ==========
                 onMounted(() => {
-                    const token = localStorage.getItem('adminToken');
-                    if (!token) {
-                        window.location.href = '/admin';
-                    }
-                    loadStats();
+                    if (isLoggedIn.value) loadStats();
                 });
                 
                 return {
+                    isLoggedIn, loginForm, loginLoading, handleLogin,
                     activeTab, loading, stats,
-                    games, gameForm, gameDialogVisible, editingGameId,
-                    openGameDialog, editGame, saveGame, deleteGame,
-                    qaList, qaForm, qaDialogVisible, editingQaId,
-                    openQaDialog, editQa, saveQa, deleteQa,
-                    recList, recForm, recDialogVisible, editingRecId,
-                    openRecDialog, editRec, saveRec, deleteRec,
-                    users,
-                    loadStats, loadGames, loadQA, loadRecommendations, loadUsers,
-                    logout
+                    games, gameForm, gameDialogVisible, editingGameId, openGameDialog, editGame, saveGame, deleteGame,
+                    qaList, qaForm, qaDialogVisible, editingQaId, openQaDialog, editQa, saveQa, deleteQa,
+                    recList, recForm, recDialogVisible, editingRecId, openRecDialog, editRec, saveRec, deleteRec,
+                    users, deleteUser, logout,
                 };
             },
             template: `
-                <el-container>
+                <!-- 登录页 -->
+                <div v-if="!isLoggedIn" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#667eea,#764ba2)">
+                    <div style="background:white;border-radius:16px;padding:40px;width:400px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+                        <h2 style="text-align:center;margin-bottom:8px;font-size:24px">👶 AI 宝贝</h2>
+                        <p style="text-align:center;color:#999;margin-bottom:30px">管理后台</p>
+                        <el-form @submit.prevent="handleLogin">
+                            <el-form-item>
+                                <el-input v-model="loginForm.username" placeholder="管理员账号" prefix-icon="User" size="large" @keyup.enter="handleLogin" />
+                            </el-form-item>
+                            <el-form-item>
+                                <el-input v-model="loginForm.password" type="password" placeholder="密码" prefix-icon="Lock" size="large" show-password @keyup.enter="handleLogin" />
+                            </el-form-item>
+                            <el-button type="primary" size="large" style="width:100%" @click="handleLogin" :loading="loginLoading">登 录</el-button>
+                        </el-form>
+                        <p style="text-align:center;color:#bbb;font-size:12px;margin-top:20px">默认账号: admin / admin123</p>
+                    </div>
+                </div>
+
+                <!-- 管理后台 -->
+                <el-container v-else>
                     <el-aside width="250px">
-                        <div style="padding: 20px 0;">
-                            <h2 style="margin: 0 0 20px;">👶 管理后台</h2>
+                        <div style="padding:20px 0">
+                            <h2 style="margin:0 20px 20px;color:white;font-size:20px">👶 管理后台</h2>
                             <el-menu :default-active="activeTab" @select="activeTab = $event">
-                                <el-menu-item index="dashboard">
-                                    <el-icon><Odometer /></el-icon>
-                                    <span>仪表盘</span>
-                                </el-menu-item>
-                                <el-menu-item index="games">
-                                    <el-icon><Grid /></el-icon>
-                                    <span>游戏管理</span>
-                                </el-menu-item>
-                                <el-menu-item index="qa">
-                                    <el-icon><ChatDotRound /></el-icon>
-                                    <span>问答管理</span>
-                                </el-menu-item>
-                                <el-menu-item index="recommendations">
-                                    <el-icon><Star /></el-icon>
-                                    <span>推荐内容</span>
-                                </el-menu-item>
-                                <el-menu-item index="users">
-                                    <el-icon><User /></el-icon>
-                                    <span>用户管理</span>
-                                </el-menu-item>
+                                <el-menu-item index="dashboard"><span>📊 仪表盘</span></el-menu-item>
+                                <el-menu-item index="games"><span>🎮 游戏管理</span></el-menu-item>
+                                <el-menu-item index="qa"><span>❓ 问答管理</span></el-menu-item>
+                                <el-menu-item index="recommendations"><span>⭐ 推荐内容</span></el-menu-item>
+                                <el-menu-item index="users"><span>👥 用户管理</span></el-menu-item>
                                 <el-divider />
-                                <el-menu-item @click="logout">
-                                    <el-icon><SwitchButton /></el-icon>
-                                    <span>退出登录</span>
-                                </el-menu-item>
+                                <el-menu-item @click="logout"><span>🚪 退出登录</span></el-menu-item>
                             </el-menu>
                         </div>
                     </el-aside>
@@ -429,247 +289,131 @@
                     <el-main>
                         <!-- Dashboard -->
                         <div v-if="activeTab === 'dashboard'" v-loading="loading">
-                            <h2 style="margin: 20px 0;">📊 仪表盘</h2>
+                            <h2 style="margin:20px 0">📊 仪表盘</h2>
                             <el-row :gutter="20">
-                                <el-col :span="6">
-                                    <el-card>
-                                        <div style="text-align: center;">
-                                            <div style="font-size: 36px; font-weight: bold; color: #667eea;">{{ stats.users }}</div>
-                                            <div style="color: #666; margin-top: 10px;">用户</div>
-                                        </div>
-                                    </el-card>
-                                </el-col>
-                                <el-col :span="6">
-                                    <el-card>
-                                        <div style="text-align: center;">
-                                            <div style="font-size: 36px; font-weight: bold; color: #764ba2;">{{ stats.babies }}</div>
-                                            <div style="color: #666; margin-top: 10px;">宝贝</div>
-                                        </div>
-                                    </el-card>
-                                </el-col>
-                                <el-col :span="6">
-                                    <el-card>
-                                        <div style="text-align: center;">
-                                            <div style="font-size: 36px; font-weight: bold; color: #f093fb;">{{ stats.games }}</div>
-                                            <div style="color: #666; margin-top: 10px;">游戏</div>
-                                        </div>
-                                    </el-card>
-                                </el-col>
-                                <el-col :span="6">
-                                    <el-card>
-                                        <div style="text-align: center;">
-                                            <div style="font-size: 36px; font-weight: bold; color: #f5576c;">{{ stats.qa }}</div>
-                                            <div style="color: #666; margin-top: 10px;">问答</div>
-                                        </div>
-                                    </el-card>
-                                </el-col>
+                                <el-col :span="6"><el-card><div style="text-align:center"><div style="font-size:36px;font-weight:bold;color:#667eea">{{ stats.users }}</div><div style="color:#666;margin-top:10px">用户</div></div></el-card></el-col>
+                                <el-col :span="6"><el-card><div style="text-align:center"><div style="font-size:36px;font-weight:bold;color:#764ba2">{{ stats.babies }}</div><div style="color:#666;margin-top:10px">宝贝</div></div></el-card></el-col>
+                                <el-col :span="6"><el-card><div style="text-align:center"><div style="font-size:36px;font-weight:bold;color:#f093fb">{{ stats.games }}</div><div style="color:#666;margin-top:10px">游戏</div></div></el-card></el-col>
+                                <el-col :span="6"><el-card><div style="text-align:center"><div style="font-size:36px;font-weight:bold;color:#f5576c">{{ stats.qa }}</div><div style="color:#666;margin-top:10px">问答</div></div></el-card></el-col>
                             </el-row>
-                            <el-row :gutter="20" style="margin-top: 20px;">
-                                <el-col :span="24">
-                                    <el-card>
-                                        <div style="font-size: 20px; font-weight: bold; color: #f5576c;">
-                                            {{ stats.recommendations }}
-                                        </div>
-                                        <div style="color: #666; margin-top: 10px;">推荐内容</div>
-                                    </el-card>
-                                </el-col>
+                            <el-row :gutter="20" style="margin-top:20px">
+                                <el-col :span="6"><el-card><div style="text-align:center"><div style="font-size:36px;font-weight:bold;color:#4ECB71">{{ stats.recommendations }}</div><div style="color:#666;margin-top:10px">推荐</div></div></el-card></el-col>
                             </el-row>
                         </div>
                         
                         <!-- Games -->
                         <div v-if="activeTab === 'games'" v-loading="loading">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 20px 0;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0">
                                 <h2>🎮 游戏管理</h2>
-                                <el-button type="primary" icon="Plus" @click="openGameDialog">添加游戏</el-button>
+                                <el-button type="primary" @click="openGameDialog">+ 添加游戏</el-button>
                             </div>
-                            <el-table :data="games" border stripe style="width: 100%;">
+                            <el-table :data="games" border stripe style="width:100%">
                                 <el-table-column prop="icon" label="图标" width="60" />
-                                <el-table-column prop="title" label="游戏名称" />
+                                <el-table-column prop="title" label="名称" />
                                 <el-table-column prop="category" label="分类" width="100" />
                                 <el-table-column prop="age_range" label="年龄" width="100" />
                                 <el-table-column prop="rating" label="评分" width="80" />
-                                <el-table-column prop="is_featured" label="推荐" width="60">
-                                    <template #default="{ row }">
-                                        <el-tag :type="row.is_featured === 1 ? 'success' : 'info'" size="small">
-                                            {{ row.is_featured === 1 ? '是' : '否' }}
-                                        </el-tag>
-                                    </template>
+                                <el-table-column label="推荐" width="60">
+                                    <template #default="{ row }"><el-tag :type="row.is_featured===1?'success':'info'" size="small">{{ row.is_featured===1?'是':'否' }}</el-tag></template>
                                 </el-table-column>
-                                <el-table-column label="操作" width="200">
+                                <el-table-column label="操作" width="160">
                                     <template #default="{ row }">
                                         <el-button size="small" @click="editGame(row)">编辑</el-button>
                                         <el-button size="small" type="danger" @click="deleteGame(row.id)">删除</el-button>
                                     </template>
                                 </el-table-column>
                             </el-table>
-                            
-                            <!-- Game Dialog -->
-                            <el-dialog v-model="gameDialogVisible" :title="editingGameId ? '编辑游戏' : '添加游戏'" width="600px">
+                            <el-dialog v-model="gameDialogVisible" :title="editingGameId?'编辑游戏':'添加游戏'" width="600px">
                                 <el-form :model="gameForm" label-width="80px">
-                                    <el-form-item label="游戏名称">
-                                        <el-input v-model="gameForm.title" placeholder="请输入游戏名称" />
-                                    </el-form-item>
-                                    <el-form-item label="图标">
-                                        <el-input v-model="gameForm.icon" placeholder="请输入 emoji 图标" style="width: 200px;" />
-                                    </el-form-item>
-                                    <el-form-item label="分类">
-                                        <el-select v-model="gameForm.category" placeholder="请选择分类">
-                                            <el-option label="益智" value="益智" />
-                                            <el-option label="启蒙" value="启蒙" />
-                                            <el-option label="数学" value="数学" />
-                                            <el-option label="音乐" value="音乐" />
-                                            <el-option label="运动" value="运动" />
-                                        </el-select>
-                                    </el-form-item>
-                                    <el-form-item label="年龄范围">
-                                        <el-input v-model="gameForm.age_range" placeholder="例如：2-4岁" />
-                                    </el-form-item>
-                                    <el-form-item label="描述">
-                                        <el-input v-model="gameForm.description" type="textarea" :rows="3" placeholder="请输入游戏描述" />
-                                    </el-form-item>
-                                    <el-form-item label="评分">
-                                        <el-rate v-model="gameForm.rating" />
-                                    </el-form-item>
-                                    <el-form-item label="推荐">
-                                        <el-switch v-model="gameForm.is_featured" />
-                                    </el-form-item>
+                                    <el-form-item label="名称"><el-input v-model="gameForm.title" /></el-form-item>
+                                    <el-form-item label="图标"><el-input v-model="gameForm.icon" style="width:200px" placeholder="emoji" /></el-form-item>
+                                    <el-form-item label="分类"><el-select v-model="gameForm.category"><el-option label="益智" value="益智" /><el-option label="启蒙" value="启蒙" /><el-option label="数学" value="数学" /><el-option label="音乐" value="音乐" /><el-option label="运动" value="运动" /></el-select></el-form-item>
+                                    <el-form-item label="年龄"><el-input v-model="gameForm.age_range" placeholder="如：2-4岁" /></el-form-item>
+                                    <el-form-item label="描述"><el-input v-model="gameForm.description" type="textarea" :rows="3" /></el-form-item>
+                                    <el-form-item label="评分"><el-rate v-model="gameForm.rating" /></el-form-item>
+                                    <el-form-item label="推荐"><el-switch v-model="gameForm.is_featured" /></el-form-item>
                                 </el-form>
-                                <template #footer>
-                                    <el-button @click="gameDialogVisible = false">取消</el-button>
-                                    <el-button type="primary" @click="saveGame">保存</el-button>
-                                </template>
+                                <template #footer><el-button @click="gameDialogVisible=false">取消</el-button><el-button type="primary" @click="saveGame">保存</el-button></template>
                             </el-dialog>
                         </div>
                         
                         <!-- QA -->
                         <div v-if="activeTab === 'qa'" v-loading="loading">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 20px 0;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0">
                                 <h2>❓ 问答管理</h2>
-                                <el-button type="primary" icon="Plus" @click="openQaDialog">添加问答</el-button>
+                                <el-button type="primary" @click="openQaDialog">+ 添加问答</el-button>
                             </div>
-                            <el-table :data="qaList" border stripe style="width: 100%;">
-                                <el-table-column type="index" label="#" width="50" />
+                            <el-table :data="qaList" border stripe style="width:100%">
+                                <el-table-column type="index" width="50" />
                                 <el-table-column prop="question" label="问题" />
                                 <el-table-column prop="answer" label="答案" show-overflow-tooltip />
                                 <el-table-column prop="category" label="分类" width="100" />
                                 <el-table-column prop="tags" label="标签" width="150" />
-                                <el-table-column label="操作" width="150">
+                                <el-table-column label="操作" width="160">
                                     <template #default="{ row }">
                                         <el-button size="small" @click="editQa(row)">编辑</el-button>
                                         <el-button size="small" type="danger" @click="deleteQa(row.id)">删除</el-button>
                                     </template>
                                 </el-table-column>
                             </el-table>
-                            
-                            <!-- QA Dialog -->
-                            <el-dialog v-model="qaDialogVisible" :title="editingQaId ? '编辑问答' : '添加问答'" width="700px">
+                            <el-dialog v-model="qaDialogVisible" :title="editingQaId?'编辑问答':'添加问答'" width="700px">
                                 <el-form :model="qaForm" label-width="80px">
-                                    <el-form-item label="问题">
-                                        <el-input v-model="qaForm.question" type="textarea" :rows="2" placeholder="请输入问题" />
-                                    </el-form-item>
-                                    <el-form-item label="答案">
-                                        <el-input v-model="qaForm.answer" type="textarea" :rows="3" placeholder="请输入答案" />
-                                    </el-form-item>
-                                    <el-form-item label="分类">
-                                        <el-select v-model="qaForm.category" placeholder="请选择分类">
-                                            <el-option label="喂养" value="喂养" />
-                                            <el-option label="睡眠" value="睡眠" />
-                                            <el-option label="教育" value="教育" />
-                                            <el-option label="行为" value="行为" />
-                                            <el-option label="健康" value="健康" />
-                                            <el-option label="成长" value="成长" />
-                                        </el-select>
-                                    </el-form-item>
-                                    <el-form-item label="标签">
-                                        <el-input v-model="qaForm.tags" placeholder="多个标签用逗号分隔" />
-                                    </el-form-item>
+                                    <el-form-item label="问题"><el-input v-model="qaForm.question" type="textarea" :rows="2" /></el-form-item>
+                                    <el-form-item label="答案"><el-input v-model="qaForm.answer" type="textarea" :rows="4" /></el-form-item>
+                                    <el-form-item label="分类"><el-select v-model="qaForm.category"><el-option label="喂养" value="喂养" /><el-option label="睡眠" value="睡眠" /><el-option label="教育" value="教育" /><el-option label="行为" value="行为" /><el-option label="健康" value="健康" /><el-option label="成长" value="成长" /></el-select></el-form-item>
+                                    <el-form-item label="标签"><el-input v-model="qaForm.tags" placeholder="逗号分隔" /></el-form-item>
                                 </el-form>
-                                <template #footer>
-                                    <el-button @click="qaDialogVisible = false">取消</el-button>
-                                    <el-button type="primary" @click="saveQa">保存</el-button>
-                                </template>
+                                <template #footer><el-button @click="qaDialogVisible=false">取消</el-button><el-button type="primary" @click="saveQa">保存</el-button></template>
                             </el-dialog>
                         </div>
                         
                         <!-- Recommendations -->
                         <div v-if="activeTab === 'recommendations'" v-loading="loading">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 20px 0;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0">
                                 <h2>⭐ 推荐内容</h2>
-                                <el-button type="primary" icon="Plus" @click="openRecDialog">添加推荐</el-button>
+                                <el-button type="primary" @click="openRecDialog">+ 添加推荐</el-button>
                             </div>
-                            <el-table :data="recList" border stripe style="width: 100%;">
+                            <el-table :data="recList" border stripe style="width:100%">
                                 <el-table-column prop="title" label="标题" />
                                 <el-table-column prop="category" label="分类" width="100" />
-                                <el-table-column prop="is_featured" label="推荐" width="80">
-                                    <template #default="{ row }">
-                                        <el-tag :type="row.is_featured === 1 ? 'success' : 'info'" size="small">
-                                            {{ row.is_featured === 1 ? '是' : '否' }}
-                                        </el-tag>
-                                    </template>
+                                <el-table-column label="推荐" width="60">
+                                    <template #default="{ row }"><el-tag :type="row.is_featured===1?'success':'info'" size="small">{{ row.is_featured===1?'是':'否' }}</el-tag></template>
                                 </el-table-column>
-                                <el-table-column label="操作" width="150">
+                                <el-table-column label="操作" width="160">
                                     <template #default="{ row }">
                                         <el-button size="small" @click="editRec(row)">编辑</el-button>
                                         <el-button size="small" type="danger" @click="deleteRec(row.id)">删除</el-button>
                                     </template>
                                 </el-table-column>
                             </el-table>
-                            
-                            <!-- Rec Dialog -->
-                            <el-dialog v-model="recDialogVisible" :title="editingRecId ? '编辑推荐' : '添加推荐'" width="600px">
+                            <el-dialog v-model="recDialogVisible" :title="editingRecId?'编辑推荐':'添加推荐'" width="600px">
                                 <el-form :model="recForm" label-width="80px">
-                                    <el-form-item label="标题">
-                                        <el-input v-model="recForm.title" placeholder="请输入标题" />
-                                    </el-form-item>
-                                    <el-form-item label="内容">
-                                        <el-input v-model="recForm.content" type="textarea" :rows="4" placeholder="请输入内容描述" />
-                                    </el-form-item>
-                                    <el-form-item label="分类">
-                                        <el-select v-model="recForm.category" placeholder="请选择分类">
-                                            <el-option label="推荐" value="推荐" />
-                                            <el-option label="绘本" value="绘本" />
-                                            <el-option label="玩具" value="玩具" />
-                                            <el-option label="课程" value="课程" />
-                                        </el-select>
-                                    </el-form-item>
-                                    <el-form-item label="链接">
-                                        <el-input v-model="recForm.link" placeholder="请输入跳转链接" />
-                                    </el-form-item>
-                                    <el-form-item label="排序">
-                                        <el-input-number v-model="recForm.order_num" placeholder="排序号" />
-                                    </el-form-item>
-                                    <el-form-item label="推荐">
-                                        <el-switch v-model="recForm.is_featured" />
-                                    </el-form-item>
+                                    <el-form-item label="标题"><el-input v-model="recForm.title" /></el-form-item>
+                                    <el-form-item label="内容"><el-input v-model="recForm.content" type="textarea" :rows="4" /></el-form-item>
+                                    <el-form-item label="分类"><el-select v-model="recForm.category"><el-option label="推荐" value="推荐" /><el-option label="绘本" value="绘本" /><el-option label="玩具" value="玩具" /><el-option label="课程" value="课程" /></el-select></el-form-item>
+                                    <el-form-item label="链接"><el-input v-model="recForm.link" /></el-form-item>
+                                    <el-form-item label="排序"><el-input-number v-model="recForm.order_num" /></el-form-item>
+                                    <el-form-item label="推荐"><el-switch v-model="recForm.is_featured" /></el-form-item>
                                 </el-form>
-                                <template #footer>
-                                    <el-button @click="recDialogVisible = false">取消</el-button>
-                                    <el-button type="primary" @click="saveRec">保存</el-button>
-                                </template>
+                                <template #footer><el-button @click="recDialogVisible=false">取消</el-button><el-button type="primary" @click="saveRec">保存</el-button></template>
                             </el-dialog>
                         </div>
                         
                         <!-- Users -->
                         <div v-if="activeTab === 'users'" v-loading="loading">
-                            <h2 style="margin: 20px 0;">👥 用户管理</h2>
-                            <el-table :data="users" border stripe style="width: 100%;">
-                                <el-table-column type="index" label="#" width="50" />
+                            <h2 style="margin:20px 0">👥 用户管理</h2>
+                            <el-table :data="users" border stripe style="width:100%">
+                                <el-table-column type="index" width="50" />
                                 <el-table-column prop="phone" label="手机号" />
                                 <el-table-column prop="nickname" label="昵称" />
-                                <el-table-column prop="baby_count" label="宝贝数量" width="100">
-                                    <template #default="{ row }">
-                                        {{ row.baby_count }} 个
-                                    </template>
+                                <el-table-column label="宝贝" width="100">
+                                    <template #default="{ row }">{{ row.baby_count || 0 }} 个</template>
                                 </el-table-column>
-                                <el-table-column prop="created_at" label="注册时间" width="180">
-                                    <template #default="{ row }">
-                                        {{ new Date(row.created_at).toLocaleString() }}
-                                    </template>
+                                <el-table-column label="注册时间" width="180">
+                                    <template #default="{ row }">{{ new Date(row.created_at).toLocaleString() }}</template>
                                 </el-table-column>
                                 <el-table-column label="操作" width="100">
-                                    <template #default="{ row }">
-                                        <el-button size="small" type="danger" @click="deleteUser(row.id)">删除</el-button>
-                                    </template>
+                                    <template #default="{ row }"><el-button size="small" type="danger" @click="deleteUser(row.id)">删除</el-button></template>
                                 </el-table-column>
                             </el-table>
                         </div>
@@ -677,29 +421,25 @@
                 </el-container>
             `
         });
-        
-        app.use('/');
+
+        // 使用 Element Plus (不注册路由)
+        app.use(ElementPlus);
+        app.mount('#app');
     </script>
     
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
         #app { min-height: 100vh; }
-        
         .el-aside { background: linear-gradient(135deg, #667eea, #764ba2); }
-        .el-aside h2 { color: white; font-size: 20px; }
+        .el-aside h2 { color: white; }
         .el-menu { border: none; background: transparent; }
         .el-menu-item { color: rgba(255,255,255,0.8); }
         .el-menu-item:hover { background: rgba(255,255,255,0.1); }
         .el-menu-item.is-active { background: rgba(255,255,255,0.2); color: white; }
-        .el-menu-item span { margin-left: 8px; }
-        
         .el-main { padding: 30px; background: #f5f5f5; }
         .el-card { margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        
         h2 { color: #333; }
-        
-        .el-table th { background: #f8f9fa; color: #666; font-weight: normal; }
     </style>
 </body>
 </html>
