@@ -130,13 +130,13 @@ app.get('/api/captcha', (req, res) => {
 
     captchaStore.set(id, {
         code: code,
-        expires_at: Date.now() + 300000 // 5分钟
+        expires_at: Date.now() + 60000 // 5分钟
     });
 
     res.json({
         id: id,
         svg: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
-        expires_at: Date.now() + 300000
+        expires_at: Date.now() + 60000
     });
 });
 

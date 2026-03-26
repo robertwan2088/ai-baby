@@ -1,7 +1,7 @@
 // SVG 图形验证码生成器
 class CaptchaGenerator {
     constructor() {
-        this.chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        this.chars = "0123456789";
     }
 
     generate(length = 4) {
@@ -14,9 +14,8 @@ class CaptchaGenerator {
 
     createSVG(code) {
         const width = 120;
-        const height = 40;
-        const fontSize = 24;
-        const padding = 10;
+        const height = 44;
+        const fontSize = 22;
 
         const colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe'];
         const bgColor = '#f8f9fa';
@@ -41,14 +40,14 @@ class CaptchaGenerator {
             dots += `<circle cx="${x}" cy="${y}" r="${r}" fill="#e2e8f0" opacity="0.5"/>`;
         }
 
-        // 验证码文本
+        // 验证码文本 - 居中显示
         let text = '';
         const spacing = width / (code.length + 1);
+        const textY = height / 2 + fontSize / 3;
         for (let i = 0; i < code.length; i++) {
-            const x = padding + i * spacing;
-            const y = padding + (height - padding * 2 - fontSize) / 2;
-            const rotation = (Math.random() - 0.5) * 20;
-            text += `<text x="${x}" y="${y}" font-size="${fontSize}" fill="${textColor}" font-family="Arial, sans-serif" font-weight="bold" text-anchor="middle" transform="rotate(${rotation} ${x} ${y})">${code[i]}</text>`;
+            const x = spacing * (i + 1);
+            const rotation = (Math.random() - 0.5) * 15;
+            text += `<text x="${x}" y="${textY}" font-size="${fontSize}" fill="${textColor}" font-family="Arial, sans-serif" font-weight="bold" text-anchor="middle" transform="rotate(${rotation} ${x} ${textY})">${code[i]}</text>`;
         }
 
         return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
