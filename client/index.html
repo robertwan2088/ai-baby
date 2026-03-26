@@ -210,16 +210,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;backg
 <div class="ltabs"><div class="ltab on" onclick="ltab('l',this)">登录</div><div class="ltab" onclick="ltab('r',this)">注册</div></div>
 <div class="lf" id="f-l">
 <div class="fg"><label>手机号</label><input class="fi" type="tel" placeholder="请输入手机号" maxlength="11"></div>
-<div class="fg"><label>验证码</label><div class="fr"><input class="fi" type="text" placeholder="请输入验证码" maxlength="6"><button class="cb" onclick="cd(this)">获取验证码</button></div></div>
-<button class="bp" onclick="doLogin();toast('登录成功');setTimeout(()=>closeS('s-login'),800)">登 录</button>
+<div class="fg"><label>验证码</label><div class="fr"><input class="fi" type="number" placeholder="请输入数字验证码" maxlength="6" inputmode="numeric" pattern="[0-9]*"><button class="cb" onclick="sendCode(this)">获取验证码</button></div></div>
+<button class="bp" onclick="doLogin()">登 录</button>
 </div>
 <div class="lf" id="f-r" style="display:none">
 <div class="fg"><label>手机号</label><input class="fi" type="tel" placeholder="请输入手机号" maxlength="11"></div>
-<div class="fg"><label>验证码</label><div class="fr"><input class="fi" type="text" placeholder="请输入验证码" maxlength="6"><button class="cb" onclick="cd(this)">获取验证码</button></div></div>
+<div class="fg"><label>验证码</label><div class="fr"><input class="fi" type="number" placeholder="请输入数字验证码" maxlength="6" inputmode="numeric" pattern="[0-9]*"><button class="cb" onclick="sendCode(this)">获取验证码</button></div></div>
 <div class="fg"><label>设置密码</label><input class="fi" type="password" placeholder="请设置 6-20 位密码"></div>
 <div class="fg"><label>确认密码</label><input class="fi" type="password" placeholder="请再次输入密码"></div>
 <div class="fg"><label>昵称</label><input class="fi" type="text" placeholder="给自己取个名字吧"></div>
-<button class="bp" onclick="doLogin();toast('注册成功');setTimeout(()=>closeS('s-login'),800)">注 册</button>
+<button class="bp" onclick="doRegister()">注 册</button>
 </div>
 <div class="lftr"><div class="dv">其他登录方式</div><div class="sl"><div class="sb" onclick="toast('微信登录')">💚</div><div class="sb" onclick="toast('Apple 登录')">🍎</div></div>
 <div class="lag">登录即代表同意 <a href="javascript:void(0)">《用户协议》</a> 和 <a href="javascript:void(0)">《隐私政策》</a></div></div>
@@ -533,6 +533,22 @@ function ltab(t,el){
 function cd(el){
   el.disabled=true;let s=59;
   let t=setInterval(()=>{s--;el.textContent=s+'s';if(s<=0){clearInterval(t);el.textContent='获取验证码';el.disabled=false}},1000);
+}
+function sendCode(el){
+  const form=el.closest('.lf');
+  const phone=form.querySelector('.fi[type="tel"]').value.trim();
+  if(!/^1\d{10}$/.test(phone)){toast('请输入正确的手机号');return;}
+  el.disabled=true;
+  fetch('/api/send-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone})})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){
+        toast('验证码：'+d.code);
+        let s=60;
+        const t=setInterval(()=>{s--;el.textContent=s+'s';if(s<=0){clearInterval(t);el.textContent='获取验证码';el.disabled=false}},1000);
+      }else{
+        toast(d.error||'发送失败');el.disabled=false;
+      }
+    }).catch(()=>{toast('网络错误');el.disabled=false;});
 }
 function toast(m){
   let t=document.getElementById('toast');t.textContent=m;t.style.display='block';
@@ -906,8 +922,30 @@ function stopTTS() {
 // ============ 登录状态 ============
 function isLoggedIn() { return loadData('logged_in', false); }
 function doLogin() {
-  saveData('logged_in', true);
-  saveData('login_time', Date.now());
+  const phone = document.querySelector('#f-l .fi[type="tel"]')?.value;
+  const code = document.querySelector('#f-l .fi[type="number"]')?.value?.trim();
+  if (!phone || phone.length < 11) { toast('请输入正确的手机号'); return; }
+  if (!code) { toast('请输入验证码'); return; }
+  fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,code})})
+    .then(r=>r.json()).then(data=>{
+      if(data.error){toast(data.error);return;}
+      authToken=data.token;localStorage.setItem('aibaby_token',data.token);
+      toast('登录成功 ✅');setTimeout(()=>{closeS('s-login')},600);
+    });
+}
+function doRegister() {
+  const phone = document.querySelector('#f-r .fi[type="tel"]')?.value;
+  const code = document.querySelector('#f-r .fi[type="number"]')?.value?.trim();
+  const nickname = document.querySelectorAll('#f-r .fi')[3]?.value?.trim();
+  if (!phone || phone.length < 11) { toast('请输入正确的手机号'); return; }
+  if (!code) { toast('请输入验证码'); return; }
+  if (!nickname) { toast('请输入昵称'); return; }
+  fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,code,nickname})})
+    .then(r=>r.json()).then(data=>{
+      if(data.error){toast(data.error);return;}
+      authToken=data.token;localStorage.setItem('aibaby_token',data.token);
+      toast('注册成功 ✅');setTimeout(()=>{closeS('s-login')},600);
+    });
 }
 function doLogout() {
   saveData('logged_in', false);
@@ -1291,8 +1329,10 @@ async function api(method, url, body) {
 // ============ 登录注册 ============
 function doLogin() {
   const phone = document.querySelector('#f-l .fi[type="tel"]')?.value;
+  const code = document.querySelector('#f-l .fi[type="number"]')?.value?.trim();
   if (!phone || phone.length < 11) { toast('请输入正确的手机号'); return; }
-  api('POST', '/api/login', { phone }).then(data => {
+  if (!code) { toast('请输入验证码'); return; }
+  api('POST', '/api/login', { phone, code }).then(data => {
     if (data.error) { toast(data.error); return; }
     authToken = data.token;
     localStorage.setItem('aibaby_token', data.token);
@@ -1303,16 +1343,15 @@ function doLogin() {
 
 function doRegister() {
   const phone = document.querySelector('#f-r .fi[type="tel"]')?.value;
-  const nickname = document.querySelectorAll('#f-r .fi')[3]?.value;
+  const code = document.querySelector('#f-r .fi[type="number"]')?.value?.trim();
+  const nickname = document.querySelectorAll('#f-r .fi')[3]?.value?.trim();
   if (!phone || phone.length < 11) { toast('请输入正确的手机号'); return; }
-  // 先自动登录
-  api('POST', '/api/login', { phone }).then(data => {
+  if (!code) { toast('请输入验证码'); return; }
+  if (!nickname) { toast('请输入昵称'); return; }
+  api('POST', '/api/register', { phone, code, nickname }).then(data => {
     if (data.error) { toast(data.error); return; }
     authToken = data.token;
     localStorage.setItem('aibaby_token', data.token);
-    if (nickname) {
-      api('PUT', '/api/user/profile', { nickname });
-    }
     toast('注册成功 ✅');
     setTimeout(() => { closeS('s-login'); loadProfile(); }, 600);
   });
